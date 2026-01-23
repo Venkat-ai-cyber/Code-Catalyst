@@ -30,7 +30,7 @@
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-top: 2rem;">
+<div class="charts-grid" style="margin-top: 2rem;">
     <!-- Learning Curve Chart -->
     <div class="glass-card animate-fade-in" style="animation-delay: 0.3s;">
         <h2><i class="fa-solid fa-chart-bar"></i> Learning Curve Analysis</h2>
@@ -169,27 +169,30 @@
 
 <div class="glass-card animate-fade-in" style="animation-delay: 0.4s; margin-top: 2rem;">
     <h2>Recent Activity</h2>
-    <table style="width: 100%; border-collapse: collapse; margin-top: 1rem; color: var(--text-muted);">
-        <thead>
-            <tr style="text-align: left; border-bottom: 1px solid var(--glass-border);">
-                <th style="padding: 1rem 0;">Activity</th>
-                <th>Date</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <td style="padding: 1rem 0;">Completed 'Advanced React' skill assessment</td>
-                <td>Oct 24, 2024</td>
-                <td style="color: #10b981;">Verified</td>
-            </tr>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <td style="padding: 1rem 0;">Updated Semester 5 GPA</td>
-                <td>Oct 20, 2024</td>
-                <td>Pending Review</td>
-            </tr>
-        </tbody>
-    </table>
+    <div style="overflow-x: auto;">
+        <table
+            style="width: 100%; border-collapse: collapse; margin-top: 1rem; color: var(--text-muted); min-width: 500px;">
+            <thead>
+                <tr style="text-align: left; border-bottom: 1px solid var(--glass-border);">
+                    <th style="padding: 1rem 0;">Activity</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 1rem 0;">Completed 'Advanced React' skill assessment</td>
+                    <td>Oct 24, 2024</td>
+                    <td style="color: #10b981;">Verified</td>
+                </tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 1rem 0;">Updated Semester 5 GPA</td>
+                    <td>Oct 20, 2024</td>
+                    <td>Pending Review</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
