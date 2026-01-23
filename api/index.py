@@ -1,14 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
-from models import db, Student, AcademicRecord, Skill, CareerGoal
 
-app = Flask(__name__)
-app.secret_key = 'super_secret_key'
-
-# Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///education_tracker.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db.init_app(app)
+app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
 # --- Routes ---
 
@@ -18,10 +10,7 @@ def index():
 
 @app.route('/dashboard')
 def dashboard():
-    students = Student.query.all()
-    return render_template('dashboard.html', students=students)
-
-
+    return render_template('dashboard.html')
 
 @app.route('/career')
 def career():
@@ -34,8 +23,6 @@ def roadmap():
 @app.route('/market')
 def market():
     return render_template('market.html')
-
-
 
 @app.route('/mentors')
 def mentors():
@@ -60,11 +47,6 @@ def profile():
 @app.route('/skills') # Kept for backward compatibility/sub-routing
 def skills():
     return render_template('skills.html')
-
-
-# Initialize DB
-with app.app_context():
-    db.create_all()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
