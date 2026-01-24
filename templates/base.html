@@ -38,26 +38,37 @@
                                                 Builder</a></li>
                                 <li><a href="{{ url_for('market') }}" class="nav-item"><i class="fa-solid fa-globe"></i>
                                                 Booming skills with current trend</a></li>
+                                <li><a href="{{ url_for('leetcode') }}" class="nav-item"><i
+                                                        class="fa-solid fa-code"></i>
+                                                LeetCode Analysis</a></li>
 
                                 <li><a href="{{ url_for('mentors') }}" class="nav-item"><i
                                                         class="fa-solid fa-users"></i> Mentor
                                                 Network</a></li>
-                                <li><a href="{{ url_for('stories') }}" class="nav-item"><i class="fa-solid fa-star"></i>
+                                <!-- <li><a href="{{ url_for('stories') }}" class="nav-item"><i class="fa-solid fa-star"></i>
                                                 Success
-                                                Stories</a></li>
-                                <li><a href="{{ url_for('institution') }}" class="nav-item"><i
+                                                Stories</a></li> -->
+                                <!-- <li><a href="{{ url_for('institution') }}" class="nav-item"><i
                                                         class="fa-solid fa-university"></i>
-                                                Institution Portal</a></li>
+                                                Institution Portal</a></li> -->
                                 <li><a href="{{ url_for('support') }}" class="nav-item"><i
                                                         class="fa-solid fa-headset"></i> Support
                                                 Center</a></li>
                         </ul>
                         <div class="user-info">
-                                <div class="avatar">S</div>
+                                {% if session.get('user_id') %}
+                                <div class="avatar">{{ session.get('user_name', 'S')[0] }}</div>
                                 <div class="details">
-                                        <span class="name">Student User</span>
-                                        <span class="role">Engineering</span>
+                                        <span class="name">{{ session.get('user_name', 'Student') }}</span>
+                                        <a href="{{ url_for('logout') }}"
+                                                style="color: var(--secondary); font-size: 0.8rem; text-decoration: none;">Logout</a>
                                 </div>
+                                {% else %}
+                                <div class="details" style="width: 100%;">
+                                        <a href="{{ url_for('login') }}" class="btn btn-primary"
+                                                style="width: 100%; text-align: center; display: block; padding: 0.5rem;">Login</a>
+                                </div>
+                                {% endif %}
                         </div>
                 </nav>
 
