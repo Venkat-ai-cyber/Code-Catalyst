@@ -4,7 +4,6 @@ import requests
 import json
 import re
 from dotenv import load_dotenv
-from sqlalchemy import func
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -12,11 +11,9 @@ from datetime import datetime
 import easyocr
 from functools import wraps
 
-# Append parent dir to path to import models if needed
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Ensure you have a models.py file with these defined
-from models import db, Student, Resume, Skill
+# --- DB Import ---
+# Importing the new Firestore 'Student' class from your models.py
+from models import Student
 
 # -------------------------------
 # LLaMA / OpenRouter Config
@@ -39,17 +36,9 @@ app.secret_key = 'super_secret_key'
 
 # --- Configuration ---
 basedir = os.path.abspath(os.path.dirname(__file__))
-db_path = os.path.join(basedir, 'instance', 'education_tracker.db')
+# SQLALCHEMY CONFIG REMOVED
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = '../static/uploads/resumes'
-
-# Ensure directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-db.init_app(app)
+# UPLOAD_FOLDER REMOVED (No longer needed since we aren't saving files)
 
 # --- Lazy Loading OCR Reader ---
 reader_instance = None
@@ -139,7 +128,8 @@ def login():
         email = request.form.get('email')
         password = request.form.get('password')
         
-        student = Student.query.filter_by(email=email).first()
+        # FIRESTORE CHANGE: Use get_by_email
+        student = Student.get_by_email(email)
         
         if student and student.password_hash and check_password_hash(student.password_hash, password):
             session['user_id'] = student.id
@@ -159,12 +149,15 @@ def signup():
         department = request.form.get('department')
         enrollment_year = request.form.get('enrollment_year')
         
-        if Student.query.filter_by(email=email).first():
+        # FIRESTORE CHANGE: Check existence
+        if Student.get_by_email(email):
             flash('Email already registered')
             return redirect(url_for('signup'))
         
         hashed_password = generate_password_hash(password)
-        new_student = Student(
+        
+        # FIRESTORE CHANGE: Create new student doc
+        new_student = Student.create(
             name=name, 
             email=email, 
             password_hash=hashed_password,
@@ -172,9 +165,7 @@ def signup():
             enrollment_year=int(enrollment_year)
         )
         
-        db.session.add(new_student)
-        db.session.commit()
-        
+        # ID is now the Firestore Document ID
         session['user_id'] = new_student.id
         session['user_name'] = new_student.name
         
@@ -194,7 +185,8 @@ def index():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    student = Student.query.get(session['user_id'])
+    # FIRESTORE CHANGE: get_by_id
+    student = Student.get_by_id(session['user_id'])
     
     if not student:
         session.clear()
@@ -202,7 +194,7 @@ def dashboard():
         return redirect(url_for('login'))
     
     # Use dynamic top_roles if available, otherwise empty
-    top_roles = getattr(student, 'top_roles', []) or []
+    top_roles = student.top_roles or []
     
     # Sort just in case LLaMA returned unsorted
     try:
@@ -214,52 +206,70 @@ def dashboard():
     # Prepare data for frontend
     best_role = top_roles[0] if top_roles else None
     
-    # Fetch Verified Skills
-    verified_skills = Skill.query.filter_by(student_id=student.id, verified=True).all()
+    # FIRESTORE CHANGE: Skills are now in the student object
+    verified_skills = student.verified_skills
     
     # --- Daily Bounty Logic ---
     bounty = None
     today = datetime.utcnow().date()
     
-    # Check if already solved today
+    # Check if already solved today (Handle potential string conversion from DB)
     is_solved_today = False
-    if student.last_bounty_date == today:
-        is_solved_today = True
+    
+    # Convert DB date (which might be a full datetime or string) to date obj for comparison
+    last_bounty_val = student.last_bounty_date
+    if last_bounty_val:
+        if isinstance(last_bounty_val, datetime):
+            if last_bounty_val.date() == today:
+                is_solved_today = True
+        elif isinstance(last_bounty_val, str):
+            # If stored as ISO string
+            try:
+                if datetime.fromisoformat(last_bounty_val).date() == today:
+                    is_solved_today = True
+            except: pass
+
+    if is_solved_today:
+        pass # Already solved
     elif verified_skills:
         # Check session for existing bounty
-        if session.get('bounty_data') and session.get('bounty_skill') in [s.skill_name for s in verified_skills]:
+        # skills in Firestore are dicts: {'skill_name': '...', 'verified': True}
+        skill_names = [s['skill_name'] for s in verified_skills if s.get('verified')]
+        
+        if session.get('bounty_data') and session.get('bounty_skill') in skill_names:
             bounty = session['bounty_data']
         else:
             # Generate new bounty
             import random
-            target_skill = random.choice(verified_skills).skill_name
-            print(f"Generating Daily Bounty for: {target_skill}")
-            
-            bounty_prompt = (
-                f"Create a specific, TOUGH, advanced-level multiple choice question for a developer skilled in '{target_skill}'. "
-                "The question should test deep understanding or edge cases. "
-                "Provide 4 distinct options. Mark the correct one INDEPENDENTLY in the 'answer' field (e.g., index 0-3). "
-                "Return strictly JSON: {\"question\": \"...\", \"options\": [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"], \"answer\": 0} "
-                "No markdown."
-            )
-            
-            bounty_resp = ask_llama("", bounty_prompt)
-            
-            # Parse
-            import json
-            import re
-            clean_bounty = re.sub(r'```json\s*|\s*```', '', bounty_resp).strip()
-            try:
-                s_idx = clean_bounty.find('{')
-                e_idx = clean_bounty.rfind('}')
-                if s_idx != -1 and e_idx != -1:
-                    bounty_data = json.loads(clean_bounty[s_idx:e_idx+1])
-                    bounty_data['skill'] = target_skill
-                    session['bounty_data'] = bounty_data
-                    session['bounty_skill'] = target_skill
-                    bounty = bounty_data
-            except Exception as be:
-                print(f"Bounty Generation Error: {be}")
+            if skill_names:
+                target_skill = random.choice(skill_names)
+                print(f"Generating Daily Bounty for: {target_skill}")
+                
+                bounty_prompt = (
+                    f"Create a specific, TOUGH, advanced-level multiple choice question for a developer skilled in '{target_skill}'. "
+                    "The question should test deep understanding or edge cases. "
+                    "Provide 4 distinct options. Mark the correct one INDEPENDENTLY in the 'answer' field (e.g., index 0-3). "
+                    "Return strictly JSON: {\"question\": \"...\", \"options\": [\"A. ...\", \"B. ...\", \"C. ...\", \"D. ...\"], \"answer\": 0} "
+                    "No markdown."
+                )
+                
+                bounty_resp = ask_llama("", bounty_prompt)
+                
+                # Parse
+                import json
+                import re
+                clean_bounty = re.sub(r'```json\s*|\s*```', '', bounty_resp).strip()
+                try:
+                    s_idx = clean_bounty.find('{')
+                    e_idx = clean_bounty.rfind('}')
+                    if s_idx != -1 and e_idx != -1:
+                        bounty_data = json.loads(clean_bounty[s_idx:e_idx+1])
+                        bounty_data['skill'] = target_skill
+                        session['bounty_data'] = bounty_data
+                        session['bounty_skill'] = target_skill
+                        bounty = bounty_data
+                except Exception as be:
+                    print(f"Bounty Generation Error: {be}")
     else:
         session.pop('bounty_data', None)
 
@@ -283,18 +293,21 @@ def solve_bounty():
         
     correct_answer = int(bounty_data.get('answer'))
     
-    student = Student.query.get(session['user_id'])
-    student.last_bounty_date = datetime.utcnow().date() # Mark attempt for today regardless of outcome
+    student = Student.get_by_id(session['user_id'])
+    
+    # FIRESTORE CHANGE: Update logic
+    updates = {}
+    updates['last_bounty_date'] = datetime.utcnow() # Store as datetime
     
     if selected_option == correct_answer:
         # Correct!
-        student.xp += 50
+        updates['xp'] = student.xp + 50
         flash("Correct! +50 XP Added.")
     else:
         # Incorrect - No XP, but burnt the chance
         flash("Incorrect answer. Better luck tomorrow!")
         
-    db.session.commit()
+    student.update(updates)
     session.pop('bounty_data', None) # Clear from session
         
     return redirect(url_for('dashboard'))
@@ -313,13 +326,14 @@ def upload_resume():
     
     if file:
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        # --- CHANGED: Read file content directly into memory ---
+        file_bytes = file.read()
 
-        # 2. OCR and Analysis Processing (FIXED: Moved Inside Function)
+        # 2. OCR and Analysis Processing
         try:
             reader = get_reader()
-            results = reader.readtext(filepath, detail=0) 
+            # Pass bytes directly to readtext
+            results = reader.readtext(file_bytes, detail=0) 
             extracted_text = " ".join(results)
             
             # --- LLaMA Analysis Start ---
@@ -367,20 +381,18 @@ def upload_resume():
             student = None
             if 'user_id' in session:
                  student_id = session['user_id']
-                 student = Student.query.get(student_id)
+                 student = Student.get_by_id(student_id)
                  if student:
                      print(f"DEBUG: Found logged-in student [ID: {student_id}]")
             
             if not student:
-                # Handle guest uploads or missing sessions gracefully
-                # For this fix, we assume login is required or we create a dummy, 
-                # but usually, you should use @login_required on this route.
                 flash('Please login to save resume data.')
                 return redirect(url_for('login'))
 
-            # Update Student Top Roles & Reset Market Analysis
-            student.top_roles = top_roles_data
-            student.market_analysis = None # Force regeneration of market insights
+            # FIRESTORE CHANGE: Update Fields via .update()
+            updates = {}
+            updates['top_roles'] = top_roles_data
+            updates['market_analysis'] = None # Force regeneration
             
             # --- ROADMAP GENERATION ---
             try:
@@ -409,20 +421,21 @@ def upload_resume():
                 idx_end = clean_rmap.rfind(']')
                 if idx_start != -1 and idx_end != -1:
                     roadmap_data = json.loads(clean_rmap[idx_start:idx_end+1])
-                    student.roadmap = roadmap_data
+                    updates['roadmap'] = roadmap_data
                     print(f"DEBUG: Roadmap saved with {len(roadmap_data)} steps.")
                 else:
                     print("DEBUG: Roadmap JSON not found in response.")
             except Exception as r_e:
                 print(f"Error generating roadmap: {r_e}")
 
-            # Create Resume Record
-            new_resume = Resume(student_id=student.id, filename=filename, ocr_content=extracted_text)
-            db.session.add(new_resume)
+            # APPLY UPDATES
+            student.update(updates)
+
+            # Create Resume Record (Subcollection)
+            # Note: We are just saving the OCR text, not the file itself
+            student.add_resume(filename=filename, ocr_content=extracted_text)
             
-            db.session.commit()
-            print("DEBUG: Database commit successful.")
-            
+            print("DEBUG: Database update successful.")
             flash('Resume analyzed! Top suitable roles updated.')
 
         except Exception as e:
@@ -445,16 +458,14 @@ def upload_certificate():
         return redirect(url_for('dashboard'))
     if file:
         filename = secure_filename(file.filename)
-        # Ensure certs folder exists
-        cert_folder = os.path.join(app.config['UPLOAD_FOLDER'], 'certs')
-        os.makedirs(cert_folder, exist_ok=True)
-        filepath = os.path.join(cert_folder, filename)
-        file.save(filepath)
+        # --- CHANGED: Read file content directly into memory ---
+        file_bytes = file.read()
         
         # 1. OCR (Reuse get_reader)
         try:
             reader = get_reader()
-            results = reader.readtext(filepath, detail=0) 
+            # Pass bytes directly to readtext
+            results = reader.readtext(file_bytes, detail=0) 
             extracted_text = " ".join(results)
             print(f"DEBUG: Certificate OCR Text: {extracted_text[:100]}...")
 
@@ -487,26 +498,15 @@ def upload_certificate():
             
             # 3. DB Update
             if is_valid == 1:
-                student_id = session['user_id']
-                # Check if skill exists (Case-Insensitive using func.lower)
-                existing_skill = Skill.query.filter(
-                    Skill.student_id == student_id, 
-                    func.lower(Skill.skill_name) == skill_name.lower()
-                ).first()
+                student = Student.get_by_id(session['user_id'])
                 
-                if existing_skill:
-                    # Update status if needed, but don't duplicate
-                    if not existing_skill.verified:
-                        existing_skill.verified = True
-                        flash(f"Skill '{skill_name}' is now verified!")
-                    else:
-                        flash(f"Skill '{skill_name}' was already verified.")
-                else:
-                    new_skill = Skill(student_id=student_id, skill_name=skill_name, proficiency_level=5, verified=True) # Default level 5
-                    db.session.add(new_skill)
+                # Check for existing skill is handled inside add_skill
+                success, msg = student.add_skill(skill_name=skill_name, proficiency=5, verified=True)
+                
+                if success:
                     flash(f"Skill '{skill_name}' added and verified!")
-                
-                db.session.commit()
+                else:
+                    flash(f"Skill '{skill_name}' was already verified.")
             else:
                 flash("Could not verify certificate. Please upload a clear image of a valid certificate.")
                 
@@ -519,7 +519,7 @@ def upload_certificate():
 @app.route('/leetcode')
 @login_required
 def leetcode():
-    student = Student.query.get(session['user_id'])
+    student = Student.get_by_id(session['user_id'])
     return render_template('leetcode.html', student=student)
 
 @app.route('/leetcode_analysis', methods=['POST'])
@@ -537,11 +537,10 @@ def leetcode_analysis():
             return redirect(url_for('leetcode'))
         return redirect(url_for('dashboard'))
 
-    # Store username
-    student = Student.query.get(session['user_id'])
+    # Store username (FIRESTORE CHANGE)
+    student = Student.get_by_id(session['user_id'])
     if student:
-        student.leetcode_username = username
-        db.session.commit()
+        student.update({'leetcode_username': username})
 
     # Sort and Flatten stats for LLaMA
     all_tags = []
@@ -617,13 +616,13 @@ def career():
 @app.route('/roadmap')
 @login_required
 def roadmap():
-    student = Student.query.get(session['user_id'])
+    student = Student.get_by_id(session['user_id'])
     return render_template('roadmap.html', student=student)
 
 @app.route('/market')
 @login_required
 def market():
-    student = Student.query.get(session['user_id'])
+    student = Student.get_by_id(session['user_id'])
     
     if not student:
         flash('User not found.')
@@ -634,8 +633,9 @@ def market():
         return render_template('market.html', student=student, analysis=student.market_analysis)
 
     # Generate Analysis
-    resume = Resume.query.filter_by(student_id=student.id).order_by(Resume.uploaded_at.desc()).first()
-    resume_text = resume.ocr_content if resume else "Student with basic Computer Science skills."
+    # FIRESTORE CHANGE: Get latest resume from subcollection
+    resume = student.get_latest_resume()
+    resume_text = resume['ocr_content'] if resume else "Student with basic Computer Science skills."
 
     print("Generating Market Analysis...")
     prompt = (
@@ -663,8 +663,8 @@ def market():
         e = clean_json.rfind('}')
         if s != -1 and e != -1:
             analysis_data = json.loads(clean_json[s:e+1])
-            student.market_analysis = analysis_data
-            db.session.commit()
+            # FIRESTORE CHANGE: Update logic
+            student.update({'market_analysis': analysis_data})
             return render_template('market.html', student=student, analysis=analysis_data)
     except Exception as e:
         print(f"Market Analysis Error: {e}")
@@ -697,8 +697,7 @@ def skills():
     return render_template('skills.html')
 
 # Initialize DB
-with app.app_context():
-    db.create_all()
+# REMOVED: db.create_all() (Not needed for Firestore)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=5000)
