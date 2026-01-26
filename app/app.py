@@ -13,7 +13,7 @@ from functools import wraps
 
 # --- DB Import ---
 # Importing the new Firestore 'Student' class from your models.py
-from models import Student
+from .models import Student
 
 # -------------------------------
 # LLaMA / OpenRouter Config
