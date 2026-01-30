@@ -18,6 +18,7 @@
 
 <body>
         <div class="app-container">
+                {% if not hide_sidebar %}
                 <!-- Sidebar Navigation -->
                 <nav class="sidebar">
                         <div class="logo">
@@ -41,19 +42,22 @@
                                 <li><a href="{{ url_for('leetcode') }}" class="nav-item"><i
                                                         class="fa-solid fa-code"></i>
                                                 LeetCode Analysis</a></li>
+                                <li><a href="{{ url_for('resume_builder') }}" class="nav-item"><i
+                                                        class="fa-solid fa-file-invoice"></i>
+                                                Resume Builder</a></li>
 
-                                <li><a href="{{ url_for('mentors') }}" class="nav-item"><i
+                                <!-- <li><a href="{{ url_for('mentors') }}" class="nav-item"><i
                                                         class="fa-solid fa-users"></i> Mentor
-                                                Network</a></li>
+                                                Network</a></li> -->
                                 <!-- <li><a href="{{ url_for('stories') }}" class="nav-item"><i class="fa-solid fa-star"></i>
                                                 Success
                                                 Stories</a></li> -->
                                 <!-- <li><a href="{{ url_for('institution') }}" class="nav-item"><i
                                                         class="fa-solid fa-university"></i>
                                                 Institution Portal</a></li> -->
-                                <li><a href="{{ url_for('support') }}" class="nav-item"><i
+                                <!-- <li><a href="{{ url_for('support') }}" class="nav-item"><i
                                                         class="fa-solid fa-headset"></i> Support
-                                                Center</a></li>
+                                                Center</a></li> -->
                         </ul>
                         <div class="user-info">
                                 {% if session.get('user_id') %}
@@ -71,6 +75,7 @@
                                 {% endif %}
                         </div>
                 </nav>
+                {% endif %}
 
                 <!-- Main Content -->
                 <main class="main-content">
