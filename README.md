@@ -13,16 +13,7 @@ Instead of providing static career suggestions, EduTrack generates **progress-ba
 - Key Features  
 - How EduTrack Works  
 - GitHub Analysis (Project Readiness)  
-- Career Pathway & Progress Logic  
-- Tech Stack  
-- System Architecture  
-- Setup & Installation  
-- API Overview  
-- Performance Optimizations  
-- Supported Domains  
-- Hackathon Context  
-- Future Enhancements  
-- Team  
+
 
 ---
 
