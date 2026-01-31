@@ -60,6 +60,18 @@
                 <div id="domain-tags" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
                 </div>
             </div>
+
+            <!-- AI Suggestions -->
+            <div
+                style="grid-column: 1 / -1; margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem;">
+                <h4 style="color: #f472b6; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Recommended Projects to Boost Profile
+                </h4>
+                <div id="ai-suggestions-grid"
+                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+                    <!-- Cards injected here -->
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -130,6 +142,25 @@
                 data.github_domains_detected.forEach(d => {
                     domainTags.innerHTML += `<span class="badge" style="background: rgba(99,102,241,0.2); color: #a5b4fc;">${d}</span>`;
                 });
+
+                // AI Suggestions
+                const aiGrid = document.getElementById('ai-suggestions-grid');
+                aiGrid.innerHTML = '';
+                if (data.ai_suggestions && data.ai_suggestions.length > 0) {
+                    data.ai_suggestions.forEach(s => {
+                        aiGrid.innerHTML += `
+                            <div style="background: rgba(255,255,255,0.03); padding: 1.2rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                                <h5 style="color: #fff; font-size: 1.1rem; margin-bottom: 0.5rem;">${s.title}</h5>
+                                <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem; line-height: 1.5;">${s.description}</p>
+                                <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #f472b6; background: rgba(244, 114, 182, 0.1); padding: 0.4rem 0.8rem; border-radius: 6px; width: fit-content;">
+                                    <i class="fa-solid fa-code"></i> ${s.tech}
+                                </div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    aiGrid.innerHTML = '<p style="color: var(--text-muted); grid-column: 1/-1;">No specific AI recommendations generated.</p>';
+                }
 
                 resultsDiv.classList.remove('hidden');
             } else {
