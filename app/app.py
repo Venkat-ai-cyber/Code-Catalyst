@@ -146,6 +146,30 @@ def fetch_github_data(username):
         print(f"GitHub Fetch Error: {e}")
         return []
 
+# --- Helper: Connect to LLaMA for Chat ---
+def chat_llama(messages):
+    """
+    Sends a full conversation history to LLaMA.
+    Used for the interactive chatbot.
+    """
+    if not API_KEY:
+        return "API Key missing."
+        
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "temperature": 0.7, # Higher temperature for conversation
+        "max_tokens": 800
+    }
+
+    try:
+        response = requests.post(URL, headers=HEADERS, json=payload)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+        return f"Error: {response.text}"
+    except Exception as e:
+        return f"Request Failed: {str(e)}"
+
 # --- Authentication Decorator ---
 def login_required(f):
     @wraps(f)
@@ -1154,6 +1178,70 @@ def analysis():
     student = Student.get_by_id(session['user_id'])
     return render_template('analysis.html', student=student)
 
+# -------------------------------
+# AI CHATBOT ROUTE
+# -------------------------------
+@app.route('/api/chat', methods=['POST'])
+@login_required
+def api_chat():
+    data = request.json
+    user_message = data.get('message')
+    history = data.get('history', []) # Expects list of {role, content}
+    
+    if not user_message:
+        return jsonify({'error': 'Message required'}), 400
+        
+    student = Student.get_by_id(session['user_id'])
+    
+    # 1. Construct Context System Prompt
+    # Extract relevant student info
+    
+    # Skills
+    skills_list = [s['skill_name'] for s in student.verified_skills if s.get('verified')]
+    skills_str = ", ".join(skills_list) if skills_list else "None verified yet"
+    
+    # Domain
+    domain = student.data.get('primaryDomain', 'General Engineering')
+    secondary = ", ".join(student.data.get('secondaryDomains', []))
+    
+    # Roadmap context (optional, simple summary)
+    current_roadmap = "Not generated"
+    if student.roadmap:
+        # Just take the first incomplete step
+        for step in student.roadmap:
+            if step['status'] == 'Focus':
+                current_roadmap = f"Focusing on: {step['title']} - {step['description']}"
+                break
+    
+    system_prompt = (
+        f"You are EduBot, an AI mentor for {student.name}.\n"
+        f"Student Profile:\n"
+        f"- Course: {student.department} (Year {student.enrollment_year})\n"
+        f"- Target Domain: {domain} {f'({secondary})' if secondary else ''}\n"
+        f"- Verified Skills: {skills_str}\n"
+        f"- Current Goal: {current_roadmap}\n\n"
+        "Instructions:\n"
+        "1. Answer questions based on their specific skills and domain.\n"
+        "2. If they ask about learning, refer to their gaps or next roadmap steps.\n"
+        "3. Be encouraging, professional, and concise.\n"
+        "4. Do NOT explicitly mention 'I checked your database record'. Just know the facts.\n"
+    )
+    
+    # 2. Build Message Chain
+    # We shouldn't trust client history blindly for system prompt, so we prepend system prompt here.
+    # History from client should be just user/assistant exchange.
+    
+    # Limit history to last 6 messages to save tokens
+    trimmed_history = history[-6:] 
+    
+    messages = [{"role": "system", "content": system_prompt}] + trimmed_history + [{"role": "user", "content": user_message}]
+    
+    # 3. Call AI
+    ai_response = chat_llama(messages)
+    
+    return jsonify({
+        "reply": ai_response
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
