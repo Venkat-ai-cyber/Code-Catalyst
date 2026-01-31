@@ -338,7 +338,7 @@ def login():
         if student and student.password_hash and check_password_hash(student.password_hash, password):
             session['user_id'] = student.id
             session['user_name'] = student.name
-            return redirect(url_for('create_resume'))
+            return redirect(url_for('dashboard'))
         else:
             flash('Invalid email or password')
             
