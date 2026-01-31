@@ -25,6 +25,7 @@ load_dotenv()
 API_KEY = os.getenv("OPENROUTER_API_KEY")
 URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "meta-llama/llama-3-8b-instruct"
+GITHUB_API_BASE = "https://api.github.com"
 
 if not API_KEY:
     print("WARNING: OPENROUTER_API_KEY not set in .env")
@@ -90,7 +91,8 @@ def get_leetcode_topic_stats(username):
     return None
 
 # --- Helper: Send Question to LLaMA ---
-def ask_llama(resume_text, question):
+def ask_llama(context_text, question):
+    """Universal helper to communicate with LLaMA via OpenRouter."""
     if not API_KEY:
         return "API Key missing."
         
@@ -99,25 +101,50 @@ def ask_llama(resume_text, question):
         "messages": [
             {
                 "role": "system",
-                "content": "Answer briefly. No explanation. Simple words only."
+                "content": "You are a specialized Career & Tech Lead AI. Return strictly valid JSON when requested. No conversational filler or markdown code blocks."
             },
             {
                 "role": "user",
-                "content": f"Resume Text:\n{resume_text}\n\nQuestion:\n{question}"
+                "content": f"Context/Resume:\n{context_text}\n\nQuestion/Task:\n{question}"
             }
         ],
         "temperature": 0.2,
-        "max_tokens": 300  # Increased slightly to ensure JSON isn't cut off
+        "max_tokens": 1000
     }
 
     try:
         response = requests.post(URL, headers=HEADERS, json=payload)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"].strip()
-        else:
-            return f"Error: {response.text}"
+        return f"Error: {response.text}"
     except Exception as e:
         return f"Request Failed: {str(e)}"
+
+# -------------------------------
+# GITHUB UTILITIES
+# -------------------------------
+def fetch_github_data(username):
+    """Fetch repos and their details from GitHub API."""
+    try:
+        res = requests.get(f"{GITHUB_API_BASE}/users/{username}/repos", timeout=5)
+        if res.status_code != 200: return []
+        
+        repos = []
+        for repo in res.json():
+            # Get languages for each repo
+            lang_res = requests.get(repo["languages_url"], timeout=5)
+            langs = list(lang_res.json().keys()) if lang_res.status_code == 200 else []
+            
+            repos.append({
+                "name": repo["name"],
+                "description": repo["description"] or "No description provided.",
+                "languages": langs,
+                "url": repo["html_url"]
+            })
+        return repos
+    except Exception as e:
+        print(f"GitHub Fetch Error: {e}")
+        return []
 
 # --- Authentication Decorator ---
 def login_required(f):
@@ -1005,7 +1032,7 @@ def detect_primary_domain(course):
 # ANALYSIS ROUTES
 # -------------------------------
 @app.route("/analyze", methods=["POST"])
-@login_required # Use session
+@login_required 
 def analyze_profile():
     data = request.json
     github_username = data.get("github_username")
@@ -1015,49 +1042,110 @@ def analyze_profile():
 
     student = Student.get_by_id(session['user_id'])
     
-    # 1. Determine Target Domains from Firebase (Primary + Secondary)
+    # 1. Determine Target Domains (Database + Input)
     primary_domain = student.data.get('primaryDomain')
-    # Use fallback if DB empty
     if not primary_domain:
          course_name = data.get("course") or student.data.get('degree', "")
          primary_domain = detect_primary_domain(course_name)
          
     secondary_domains = student.data.get('secondaryDomains', [])
+    target_domains_str = f"{primary_domain}" + (f", {', '.join(secondary_domains)}" if secondary_domains else "")
     
-    # Combined Targets
-    target_domains = [primary_domain] + secondary_domains
+    # 2. Fetch raw data from GitHub
+    repos = fetch_github_data(github_username)
+    if not repos:
+        return jsonify({
+            "error": "No data found",
+            "projects": [], 
+            "missing_projects": ["Could not fetch GitHub data"], 
+            "github_domains_detected": [],
+            "ai_suggestions": [],
+            "career_readiness": "Unknown",
+            "primary_domain": primary_domain
+        })
+
+    # 3. Prepare Context for LLaMA
+    # Limit to top 15 repos to fit context window if needed, but 1000 tokens output is limit.
+    # Input context can be larger.
+    repo_summary = []
+    for r in repos[:15]: 
+        repo_summary.append(f"- Name: {r['name']} | Langs: {', '.join(r['languages'])} | Desc: {r['description']}")
     
-    # 2. Analyze Repos
-    repo_analysis, detected_domains = analyze_github(github_username)
+    repo_text = "\n".join(repo_summary)
+
+    # 4. Comprehensive LLaMA Analysis
+    print(f"🤖 LLaMA Analysis for {github_username} on domain {target_domains_str}...")
     
-    # 3. Gap Analysis
-    # Logic: For each target domain (e.g. 'hardware'), check if user has 'hardware' projects.
-    # If not, add the required projects for that domain.
-    gaps = []
+    prompt = (
+        f"Act as a Senior Tech Interviewer. Analyze these GitHub repositories for a student targeting: {target_domains_str}.\n\n"
+        f"Repositories:\n{repo_text}\n\n"
+        "Perform a comprehensive analysis and return a STRICT JSON object with these exact keys:\n"
+        "1. \"repo_classifications\": A dictionary mapping EACH repo name to its specific technical domain (e.g., \"Web Dev\", \"ML\", \"IoT\").\n"
+        "2. \"detected_domains\": A list of unique domains evident in their work.\n"
+        "3. \"gaps\": A list of 2-3 critical missing project types or skills required for their target but missing in repos.\n"
+        "4. \"readiness\": A string rating (\"Job Ready\", \"Good Progress\", \"Needs Improvement\", or \"Beginner\").\n"
+        "5. \"suggestions\": A list of 3 high-impact project ideas. Each object must have: \"title\", \"description\", \"tech\".\n\n"
+        "JSON ONLY. No markdown."
+    )
+
+    ai_response = ask_llama("", prompt)
     
-    for target in target_domains:
-        target = target.lower()
-        # Check if this domain is covered by any repo
-        # Note: 'classify_project' returns keys from PROJECT_DOMAIN_RULES.
-        # We check if 'target' is in 'detected_domains'.
-        if target == 'software':
-            # Software is broad, allow 'web' or 'software' matches
-            if 'software' not in detected_domains and 'web' not in detected_domains:
-                gaps.extend(REQUIRED_PROJECTS.get('software', []))
-        elif target not in detected_domains:
-             # Generically check coverage
-             gaps.extend(REQUIRED_PROJECTS.get(target, []))
+    # 5. Parse and Format Response
+    import json
+    import re
+    
+    try:
+        clean_json = re.sub(r'```json\s*|\s*```', '', ai_response).strip()
+        analysis_data = json.loads(clean_json)
+    except Exception as e:
+        print(f"LLaMA Analysis Parse Error: {e} | Response: {ai_response}")
+        # Fallback partial data
+        analysis_data = {
+            "repo_classifications": {},
+            "detected_domains": [],
+            "gaps": ["Error analyzing profile"],
+            "readiness": "Analysis Failed",
+            "suggestions": []
+        }
+
+    # 6. Construct Frontend Response
+    # Map LLaMA classifications back to the repo list
+    formatted_projects = []
+    classifications = analysis_data.get("repo_classifications", {})
+    
+    for r in repos:
+        # Use AI classification or fallback to language-based guess
+        domain = classifications.get(r['name'])
+        if not domain:
+            # Fallback (simple heuristic if AI missed one)
+            desc_lower = (r['description'] + " " + " ".join(r['languages'])).lower()
+            if "html" in desc_lower or "react" in desc_lower: domain = "Web"
+            elif "python" in desc_lower and "data" in desc_lower: domain = "Data/ML"
+            elif "c++" in desc_lower or "arduino" in desc_lower: domain = "Embedded"
+            else: domain = "General Config/Other"
+            
+        formatted_projects.append({
+            "repo_name": r["name"],
+            "domain": domain, # Used by frontend
+            "languages": r["languages"],
+            "url": r["url"]
+        })
 
     response = {
         "github_user": github_username,
         "primary_domain": primary_domain,
         "secondary_domains": secondary_domains,
-        "repo_count": len(repo_analysis),
-        "projects": repo_analysis,
-        "github_domains_detected": detected_domains,
-        "missing_projects": list(set(gaps)), # Unique list
-        "career_readiness": "Good" if not gaps else "Needs Improvement"
+        "repo_count": len(repos),
+        "projects": formatted_projects, # Matches frontend expectation
+        "github_domains_detected": analysis_data.get("detected_domains", []),
+        "missing_projects": analysis_data.get("gaps", []),
+        "ai_suggestions": analysis_data.get("suggestions", []),
+        "career_readiness": analysis_data.get("readiness", "Pending")
     }
+    
+    # Save to DB for record (optional but good practice)
+    student.update({'last_github_analysis': response})
+
     return jsonify(response)
 
 @app.route('/analysis')
